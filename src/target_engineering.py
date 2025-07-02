@@ -1,101 +1,57 @@
+# src/target_engineering.py
 import pandas as pd
 import numpy as np
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
 import logging
 
+logger = logging.getLogger(__name__)
+
 class RiskProxyGenerator:
-    """
-    Creates proxy target variable using RFM analysis and clustering
-    """
-    
-    def __init__(self, snapshot_date=None, random_state=42):
-        self.snapshot_date = pd.to_datetime(snapshot_date) if snapshot_date else None
-        self.random_state = random_state
-        self.scaler = StandardScaler()
-        self.kmeans = KMeans(n_clusters=3, random_state=random_state)
-        self.rfm_pipeline = Pipeline([
-            ('scaler', self.scaler),
-            ('cluster', self.kmeans)
-        ])
-        self.high_risk_cluster = None
-        self.cluster_stats = None
-        self.logger = logging.getLogger(__name__)
+    def __init__(self, recency_threshold=90, frequency_threshold=5, monetary_threshold=1000):
+        self.recency_threshold = recency_threshold
+        self.frequency_threshold = frequency_threshold
+        self.monetary_threshold = monetary_threshold
         
-    def calculate_rfm(self, df):
-        """Calculate RFM metrics for each customer"""
-        required_cols = ['CustomerId', 'TransactionStartTime', 'TransactionId', 'Amount']
-        if not all(col in df.columns for col in required_cols):
-            raise ValueError(f"Dataframe must contain {required_cols}")
+    def generate_proxy_target(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Generate risk proxy target based on RFM analysis"""
+        try:
+            # Validate input columns
+            required_cols = {'CustomerId', 'TransactionStartTime', 'Amount'}
+            if not required_cols.issubset(df.columns):
+                missing = required_cols - set(df.columns)
+                raise ValueError(f"Missing required columns: {missing}")
+
+            # Convert to datetime with proper timezone handling
+            df['TransactionStartTime'] = pd.to_datetime(
+                df['TransactionStartTime'],
+                utc=True,  # Important for timezone-aware timestamps
+                errors='coerce'  # Convert invalid dates to NaT
+            )
             
-        if not self.snapshot_date:
-            self.snapshot_date = df['TransactionStartTime'].max()
+            # Check for failed conversions
+            if df['TransactionStartTime'].isna().any():
+                bad_dates = df[df['TransactionStartTime'].isna()]['TransactionStartTime'].head()
+                logger.warning(f"Failed to parse {df['TransactionStartTime'].isna().sum()} dates. Examples:\n{bad_dates}")
+                df = df.dropna(subset=['TransactionStartTime'])
             
-        rfm = df.groupby('CustomerId').agg({
-            'TransactionStartTime': lambda x: (self.snapshot_date - x.max()).days,
-            'TransactionId': 'count',
-            'Amount': lambda x: x[x > 0].sum()  # Only consider purchases
-        }).rename(columns={
-            'TransactionStartTime': 'Recency',
-            'TransactionId': 'Frequency',
-            'Amount': 'Monetary'
-        })
-        
-        # Log transform with epsilon to handle zero
-        rfm['Monetary'] = np.log1p(rfm['Monetary'])
-        return rfm
-    
-    def identify_high_risk_cluster(self, rfm):
-        """Determine which cluster represents high-risk customers"""
-        self.cluster_stats = rfm.groupby('Cluster').agg({
-            'Recency': 'mean',
-            'Frequency': 'mean',
-            'Monetary': 'mean'
-        }).reset_index()
-        
-        # High risk = high recency, low frequency, low monetary
-        self.cluster_stats['RiskScore'] = (
-            self.cluster_stats['Recency'].rank(ascending=False) +
-            self.cluster_stats['Frequency'].rank(ascending=True) +
-            self.cluster_stats['Monetary'].rank(ascending=True)
-        )
-        
-        self.high_risk_cluster = self.cluster_stats.loc[
-            self.cluster_stats['RiskScore'].idxmin(), 'Cluster'
-        ]
-        self.logger.info(f"Identified high-risk cluster: {self.high_risk_cluster}")
-        return self.high_risk_cluster
-    
-    def generate_proxy_target(self, df):
-        """Main method to create is_high_risk column"""
-        # Step 1: Calculate RFM metrics
-        rfm = self.calculate_rfm(df)
-        
-        # Step 2: Cluster customers
-        features = ['Recency', 'Frequency', 'Monetary']
-        rfm['Cluster'] = self.rfm_pipeline.fit_predict(rfm[features])
-        
-        # Step 3: Identify high-risk cluster
-        self.identify_high_risk_cluster(rfm)
-        
-        # Step 4: Create binary target
-        rfm['is_high_risk'] = (rfm['Cluster'] == self.high_risk_cluster).astype(int)
-        
-        # Step 5: Merge back to original data
-        result = df.merge(
-            rfm[['is_high_risk']], 
-            left_on='CustomerId', 
-            right_index=True,
-            how='left'
-        )
-        
-        # Treat new customers as high risk
-        result['is_high_risk'] = result['is_high_risk'].fillna(1)
-        return result
-    
-    def get_cluster_profiles(self):
-        """Returns cluster characteristics for analysis"""
-        if self.cluster_stats is None:
-            raise ValueError("Run generate_proxy_target() first")
-        return self.cluster_stats.sort_values('RiskScore').to_dict('records')
+            # Calculate RFM metrics
+            rfm = df.groupby('CustomerId').agg({
+                'TransactionStartTime': lambda x: (pd.Timestamp.now(tz='UTC') - x.max()).days,
+                'Amount': ['count', 'sum']
+            })
+            
+            # Flatten multi-index columns
+            rfm.columns = ['Recency', 'Frequency', 'Monetary']
+            
+            # Create risk flags
+            rfm['is_high_risk'] = np.where(
+                (rfm['Recency'] > self.recency_threshold) |
+                (rfm['Frequency'] < self.frequency_threshold) |
+                (rfm['Monetary'] > self.monetary_threshold),
+                1, 0
+            )
+            
+            return rfm.reset_index()
+            
+        except Exception as e:
+            logger.error(f"Target generation failed: {str(e)}")
+            raise

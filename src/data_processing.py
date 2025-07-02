@@ -7,6 +7,7 @@ from sklearn.preprocessing import (StandardScaler, OneHotEncoder,
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from xverse.transformer import MonotonicBinning
+from sklearn.compose import make_column_selector
 
 class WOETransformer(BaseEstimator, TransformerMixin):
     """Custom Weight of Evidence transformer"""
@@ -50,64 +51,53 @@ class TemporalFeatureExtractor(BaseEstimator, TransformerMixin):
                  'TransactionMonth', 'TransactionWeekday']]
 
 class RFMAggregator(BaseEstimator, TransformerMixin):
-    """Creates RFM features at customer level"""
+    """Calculates RFM features at customer level and generates target variable"""
+    def __init__(self, target_threshold=0.5):
+        self.target_threshold = target_threshold
+        
     def fit(self, X, y=None):
         return self
         
     def transform(self, X, y=None):
-        rfm = X.groupby('AccountId').agg({
-            'TransactionStartTime': lambda x: (x.max() - x.min()).days,
+        # Calculate RFM features
+        rfm = X.groupby('CustomerId').agg({
+            'TransactionStartTime': lambda x: (pd.Timestamp.now() - x.max()).days,
             'TransactionId': 'count',
-            'Amount': ['sum', 'mean', 'std']
+            'Amount': ['sum', 'mean'],
+            'Default': 'mean'  # Assuming you have a Default column for supervised learning
         })
-        rfm.columns = ['Recency', 'Frequency', 
-                      'Monetary_Sum', 'Monetary_Mean', 'Monetary_Std']
+        rfm.columns = ['Recency', 'Frequency', 'Monetary_Sum', 'Monetary_Mean', 'DefaultRate']
+        
+        # Create target variable
+        rfm['is_high_risk'] = (rfm['DefaultRate'] > self.target_threshold).astype(int)
+        
         return rfm.reset_index()
-
-def build_feature_pipeline():
-    """Main pipeline construction"""
-    
-    # Temporal features pipeline
-    temporal_pipe = Pipeline([
-        ('extractor', TemporalFeatureExtractor()),
-        ('imputer', SimpleImputer(strategy='most_frequent'))
-    ])
-    
-    # RFM features pipeline
-    rfm_pipe = Pipeline([
-        ('aggregator', RFMAggregator()),
-        ('scaler', StandardScaler())
-    ])
-    
-    # Categorical processing
-    categorical_pipe = Pipeline([
-        ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
-        ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-    ])
-    
-    # Numerical processing
-    numerical_pipe = Pipeline([
+def create_full_pipeline():
+    """Create the complete feature engineering pipeline"""
+    # Numerical features
+    numeric_features = ['Amount', 'Value']
+    numeric_transformer = Pipeline([
         ('imputer', SimpleImputer(strategy='median')),
         ('scaler', StandardScaler())
     ])
     
-    # Column mappings
-    categorical_features = ['ProductCategory', 'ChannelId', 'CountryCode']
-    numerical_features = ['Amount', 'Value']
-    
-    # Main preprocessor
-    preprocessor = ColumnTransformer([
-        ('temporal', temporal_pipe, ['TransactionStartTime']),
-        ('categorical', categorical_pipe, categorical_features),
-        ('numerical', numerical_pipe, numerical_features),
-        ('rfm', rfm_pipe, ['AccountId', 'TransactionStartTime', 
-                          'TransactionId', 'Amount'])
-    ], remainder='drop')
-    
-    # Full pipeline with custom WOE
-    full_pipeline = Pipeline([
-        ('preprocessor', preprocessor),
-        ('monotonic_bin', MonotonicBinning())
+    # Categorical features
+    categorical_features = ['ProductCategory', 'ChannelId']
+    categorical_transformer = Pipeline([
+        ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+        ('onehot', OneHotEncoder(handle_unknown='ignore'))
     ])
     
-    return full_pipeline
+    # Preprocessor
+    preprocessor = ColumnTransformer([
+        ('num', numeric_transformer, numeric_features),
+        ('cat', categorical_transformer, categorical_features)
+    ])
+    
+    # Full pipeline
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor)
+    ])
+    
+    return pipeline
+
