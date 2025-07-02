@@ -1,151 +1,101 @@
-### Credit Scoring Business Understanding.
 
-### Task 1: Credit Scoring Business Understanding
-Here's what you should include in your README.md:
+---
 
-How Basel II influences model requirements
-Basel II emphasizes three pillars: minimum capital requirements, supervisory review, and market discipline. This means:
+## 🧠 Credit Scoring Business Understanding
 
-Our model must be interpretable to satisfy regulatory scrutiny
+### 1. Basel II Accord and Model Interpretability
+Basel II requires banks to adopt internal risk measurement systems that are transparent, auditable, and explainable. Hence, we need interpretable models (e.g., Logistic Regression with Weight of Evidence) that offer traceable decision logic and align with regulatory compliance. This ensures regulators and auditors can verify how credit risk decisions are made.
 
-Documentation must clearly show how risk is measured and quantified
+### 2. Necessity of a Proxy Target
+Our dataset lacks an explicit "default" label. To proceed, we construct a **proxy target** by identifying disengaged users using RFM (Recency, Frequency, Monetary) analysis. However, this introduces **business risks** — including label noise and misclassification — which may impact model accuracy and lead to unfair lending decisions if not handled carefully.
 
-We need to demonstrate the model's predictive power and stability over time
+### 3. Simple vs. Complex Models: The Trade-off
+- **Simple (e.g., Logistic Regression + WoE):** Easier to explain and deploy in regulated environments. Good for baseline.
+- **Complex (e.g., XGBoost):** Typically offers better accuracy but lacks transparency. May be restricted in high-stakes credit environments due to low interpretability.
 
-The model must align with the bank's risk appetite and capital allocation strategies
+---
 
-Proxy variable necessity and risks
-Since we lack direct default data:
+## 📊 Task 2 - Exploratory Data Analysis (EDA)
 
-A proxy based on RFM (Recency, Frequency, Monetary) patterns can estimate risk
+Conducted in Jupyter notebooks, the EDA revealed:
 
-Potential proxy: Customers with frequent late payments or fraud flags as "high risk"
+- Skewed distributions in monetary features.
+- Missing values in some categorical variables.
+- Several strong correlations across frequency-related features.
+- Outliers in transaction amounts.
+- Uneven distribution in categorical features like `ProductCategory` and `CountryCode`.
 
-Business risks include:
+---
 
-Misclassification leading to lost revenue (false positives) or defaults (false negatives)
+## 🧱 Task 3 - Feature Engineering
 
-Proxy may not perfectly correlate with actual repayment behavior
+Implemented via `sklearn.pipeline.Pipeline` in `src/data_processing.py`. Steps included:
 
-Potential bias in the proxy affecting certain customer segments
+- Aggregate features (Total, Average, Std of transactions).
+- Temporal features (Transaction hour, month, year).
+- One-Hot and Label Encoding for categorical variables.
+- Imputation for missing data.
+- Feature scaling (Standardization).
+- Optional WoE transformation using `xverse` and `woe` libraries.
 
-Model complexity trade-offs
-Simple models (Logistic Regression with WoE):
+---
 
-Pros: Easily interpretable, regulatory-friendly, simpler to validate
+## 🏷️ Task 4 - Proxy Target Variable Engineering
 
-Cons: May miss complex patterns, lower predictive power
+- **RFM Analysis:** Computed Recency, Frequency, and Monetary values per customer.
+- **Clustering:** Applied KMeans to segment customers into 3 clusters using scaled RFM.
+- **High-Risk Proxy:** Defined the least-engaged cluster as high-risk (`is_high_risk = 1`).
+- **Integration:** Merged the `is_high_risk` target column into the model training dataset.
 
-Complex models (Gradient Boosting):
+---
 
-Pros: Higher accuracy, captures non-linear relationships
+## 🤖 Task 5 - Model Training & Experiment Tracking
 
-Cons: Black-box nature raises regulatory concerns, harder to explain decisions
+- Used **MLflow** for experiment tracking and model registry.
+- Trained and compared models:
+  - Logistic Regression
+  - Random Forest
+  - Gradient Boosting (XGBoost)
+- Evaluated using:
+  - Accuracy, Precision, Recall, F1 Score, ROC-AUC
+- Hyperparameter tuning via `hyperopt`
+- Unit tests created in `tests/test_data_processing.py` using `pytest`.
 
-In regulated finance, we often start simple and only add complexity if it provides material improvement that justifies the compliance overhead.
+---
 
-### Task 2: Exploratory Data Analysis (EDA)
-Objectives
-Understand dataset structure and quality
+## 🚀 Task 6 - Model Deployment & CI/CD
 
-Identify patterns in transaction behavior
+- Built a **REST API** using FastAPI in `src/api/main.py`
+- `/predict` endpoint returns credit risk probability.
+- Pydantic models used for input/output validation.
+- Containerized the service with:
+  - `Dockerfile`
+  - `docker-compose.yml`
+- CI Pipeline with GitHub Actions:
+  - Code linting via `flake8`
+  - Test execution via `pytest`
+  - Pipeline fails on lint/test errors.
 
-Detect anomalies and outliers
+---
 
-Assess relationships between features
+## 📚 References
 
-Formulate hypotheses for feature engineering
+- [Basel II Capital Accord](https://www3.stat.sinica.edu.tw/statistica/oldpdf/A28n535.pdf)
+- [Alternative Credit Scoring by HKMA](https://www.hkma.gov.hk/media/eng/doc/key-functions/financial-infrastructure/alternative_credit_scoring.pdf)
+- [World Bank Credit Scoring Guidelines](https://thedocs.worldbank.org/en/doc/935891585869698451-0130022020/original/CREDITSCORINGAPPROACHESGUIDELINESFINALWEB.pdf)
+- [Credit Risk Model Tutorial](https://towardsdatascience.com/how-to-develop-a-credit-risk-model-and-scorecard-91335fc01f03)
+- [Credit Risk - Corporate Finance Institute](https://corporatefinanceinstitute.com/resources/commercial-lending/credit-risk/)
+- [Risk Officer - Credit Risk](https://www.risk-officer.com/Credit_Risk.htm)
 
-Key Findings
-1. Dataset Overview
-Shape: [X] rows × [Y] columns
+---
 
-Data Types:
+## 🛠 Tech Stack
 
-Numerical: Amount, Value, FraudResult
+- Python, Scikit-learn, XGBoost, Pandas, NumPy
+- MLflow, FastAPI, Docker, GitHub Actions
+- Jupyter, Matplotlib, Seaborn
+- Pytest, Flake8, Black
 
-Categorical: ProductCategory, ChannelId, CountryCode
+---
 
-Temporal: TransactionStartTime
-
-Unique Customers: [Z] distinct AccountIds
-
-2. Data Quality
-Missing Values:
-
-[Column_A]: [N]% missing (Requires imputation)
-
-[Column_B]: [M]% missing (May be dropped)
-
-Inconsistencies:
-
-[Issue] detected in [Column] (e.g., negative values in Amount for credits)
-
-3. Transaction Analysis
-Amount Distribution:
-
-Right-skewed with mean = $[X], median = $[Y]
-
-Outliers: [K] transactions ([P]%) exceed ±1.5×IQR
-
-Fraud rate in outliers: [Q]% (vs. overall [R]%)
-
-Fraud Prevalence:
-
-Overall fraud rate: [F]%
-
-Higher fraud likelihood for:
-
-Transactions > $[Threshold]
-
-[Specific_Product_Category]
-
-4. RFM Analysis (Risk Proxy)
-Metric	Pattern	Risk Implication
-Recency	[X]% customers inactive >30d	Higher risk for new/lapsed users
-Frequency	Top [Y]% account for [Z]% of transactions	High frequency → Lower risk
-Monetary	[A]% of revenue from [B]% users	High spenders → Higher risk
-5. Correlation Insights
-Strong Positive Correlations:
-
-Amount ↔ Value (r = [X])
-
-[Feature_A] ↔ FraudResult (r = [Y])
-
-Negative Relationships:
-
-Recency ↔ Frequency (r = -[Z])
-
-Actionable Insights
-Risk Proxy Definition:
-
-High-risk users exhibit:
-
-FraudResult = 1
-
-Recency > [X] days
-
-Transaction amounts > $[Y]
-
-Feature Engineering Priorities:
-
-Create:
-
-Temporal Features: Day/hour of transaction
-
-Behavioral Metrics: Rolling transaction frequency
-
-Risk Flags: Outlier transactions
-
-Data Cleaning Required:
-
-Impute missing [Column] with [Method]
-
-Cap extreme values in Amount at [P]th percentile
-
-Modeling Considerations:
-
-Class Imbalance: Fraud cases are rare ([F]%) → Require stratification/SMOTE
-
-Non-Linear Relationships: RFM metrics show exponential distributions → Consider log transforms
 
